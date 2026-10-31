@@ -7,10 +7,12 @@ from pydantic import BaseModel, Field
 
 Language = Literal["de", "fr", "other"]
 Role = Literal["student", "teacher", "other"]
-ErrorCategory = Literal["grammar", "conjugation", "vocabulary", "pronunciation"]
+# "text": fidelity to a reference text (recitation / reading): omitted or wrong words
+ErrorCategory = Literal["grammar", "conjugation", "vocabulary", "pronunciation", "text"]
 Severity = Literal["minor", "major"]
 ErrorStatus = Literal["pending", "confirmed", "rejected"]
-CATEGORIES: tuple[ErrorCategory, ...] = ("grammar", "conjugation", "vocabulary", "pronunciation")
+CATEGORIES: tuple[ErrorCategory, ...] = ("grammar", "conjugation", "vocabulary", "pronunciation",
+                                         "text")
 
 
 class Word(BaseModel):
@@ -45,7 +47,7 @@ class DetectedError(BaseModel):
     expected: str = ""
     explanation: str = ""
     confidence: float = 0.7
-    source: str = "llm"  # llm | rules | phonemes | asr_confidence | manual
+    source: str = "llm"  # llm | rules | phonemes | asr_confidence | reference | manual
     status: ErrorStatus = "pending"
     note: str = ""
 
@@ -58,6 +60,9 @@ class Stats(BaseModel):
     graded_segments: int = 0
     teacher_segments: int = 0
     french_segments: int = 0
+    # Rhythm signals (0 / empty on analyses made before they existed)
+    words_per_minute: float = 0.0
+    pauses: list[float] = Field(default_factory=list)  # silences >= MIN_PAUSE between student words
 
 
 class Analysis(BaseModel):
@@ -71,7 +76,7 @@ class Analysis(BaseModel):
 # ---- Rubric & grade -------------------------------------------------------------------------
 
 RepeatPolicy = Literal["count_all", "once_per_subtype", "once_per_expected"]
-CriterionKind = Literal["errors", "volume", "manual"]
+CriterionKind = Literal["errors", "volume", "manual", "rhythm"]
 Rounding = Literal["none", "half", "integer"]
 
 
@@ -90,6 +95,15 @@ class Criterion(BaseModel):
     penalty_major: float = Field(default=1.0, ge=0)
     cap_deduction: float | None = Field(default=None, ge=0)
     tiers: list[VolumeTier] = Field(default_factory=list)
+    # Coefficient in the weighted mean of criteria (each taken as earned/max). None = max_points,
+    # i.e. the plain sum of points.
+    weight: float | None = Field(default=None, ge=0)
+    # kind "rhythm": suggested mark = max − pause_penalty per pause longer than pause_seconds
+    # − slow_penalty when the speech rate is under min_wpm. The teacher can override it.
+    pause_seconds: float = Field(default=1.5, gt=0)
+    pause_penalty: float = Field(default=0.5, ge=0)
+    min_wpm: float = Field(default=60, ge=0)
+    slow_penalty: float = Field(default=0.5, ge=0)
 
 
 class Rubric(BaseModel):
@@ -111,6 +125,8 @@ class CriterionGrade(BaseModel):
     max: float
     detail: str = ""
     error_count: int = 0
+    weight: float = 0.0
+    suggested: float | None = None  # kind "rhythm": automatic suggestion, even when overridden
 
 
 class Grade(BaseModel):
@@ -141,5 +157,22 @@ def default_rubric() -> Rubric:
                              VolumeTier(min_words=40, points=2)]),
             Criterion(id="flu", label="Aisance / communication (saisie enseignant)", kind="manual",
                       max_points=2),
+        ],
+    )
+
+
+def recitation_rubric() -> Rubric:
+    """Recitation / reading against a reference text: two marks out of 20 and a rhythm mark."""
+    return Rubric(
+        name="Récitation / lecture (texte de référence)",
+        total_points=20,
+        rounding="half",
+        repeat_policy="count_all",
+        criteria=[
+            Criterion(id="text", label="Texte (mots oubliés ou erronés)", category="text",
+                      max_points=20, penalty_minor=2, penalty_major=2),
+            Criterion(id="pron", label="Prononciation", category="pronunciation", max_points=20,
+                      penalty_minor=2, penalty_major=2),
+            Criterion(id="rhythm", label="Rythme", kind="rhythm", max_points=2),
         ],
     )

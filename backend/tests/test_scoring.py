@@ -98,3 +98,35 @@ def test_low_confidence_pending_ignored_unless_confirmed():
     assert compute_grade(an([e]), r).total == 10
     e.status = "confirmed"
     assert compute_grade(an([e]), r).total == 7
+
+
+def test_recitation_rubric_weighted_mean():
+    from app.models import recitation_rubric
+
+    r = recitation_rubric()
+    a = an([mk_error(category="text", severity="major", start=1.0),
+            mk_error(category="text", severity="major", start=2.0, expected="x"),  # repeated word
+            mk_error(category="pronunciation", severity="minor", start=3.0)])
+    g = compute_grade(a, r)
+    assert [(c.earned, c.max) for c in g.criteria] == [(16, 20), (18, 20), (2, 2)]
+    assert g.total == 17  # (16 + 18 + 2) / 42 × 20 = 17.14 → 17
+    for c, w in zip(r.criteria, (2, 2, 1), strict=True):
+        c.weight = w
+    g = compute_grade(a, r)
+    assert [c.weight for c in g.criteria] == [2, 2, 1]
+    assert g.total == 17.5  # (2×0.8 + 2×0.9 + 1×1) / 5 × 20 = 17.6 → 17.5
+
+
+def test_rhythm_suggestion_and_override():
+    r = Rubric(name="r", total_points=2, rounding="none",
+               criteria=[Criterion(id="rh", label="Rythme", kind="rhythm", max_points=2)])
+    a = an([])
+    a.stats.words_per_minute, a.stats.pauses = 95.0, [0.6, 1.7, 2.4]
+    c = compute_grade(a, r).criteria[0]
+    assert c.earned == 1.0 and c.suggested == 1.0 and "2 pause(s)" in c.detail
+    a.stats.words_per_minute = 40.0  # slow as well
+    assert compute_grade(a, r).criteria[0].earned == 0.5
+    c = compute_grade(a, r, {"rh": 2}).criteria[0]
+    assert c.earned == 2 and c.suggested == 0.5  # the teacher has the last word
+    a.stats.words_per_minute, a.stats.pauses = 0.0, []  # analysis older than the rhythm signals
+    assert compute_grade(a, r).criteria[0].earned == 2

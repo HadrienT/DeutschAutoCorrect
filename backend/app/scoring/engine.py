@@ -86,6 +86,29 @@ def _grade_volume(analysis: Analysis, c: Criterion) -> CriterionGrade:
                           detail=f"{words} mot(s) d'élève")
 
 
+def rhythm_suggestion(analysis: Analysis, c: Criterion) -> tuple[float, str]:
+    """Automatic rhythm mark from long pauses and speech rate (a heuristic the teacher reviews)."""
+    stats = analysis.stats
+    long_pauses = sum(1 for p in stats.pauses if p >= c.pause_seconds)
+    slow = 0 < stats.words_per_minute < c.min_wpm
+    value = c.max_points - long_pauses * c.pause_penalty - (c.slow_penalty if slow else 0.0)
+    detail = (f"{stats.words_per_minute:g} mots/min{' (lent)' if slow else ''}, "
+              f"{long_pauses} pause(s) de plus de {c.pause_seconds:g} s")
+    return min(max(value, 0.0), c.max_points), detail
+
+
+def _grade_rhythm(analysis: Analysis, c: Criterion, manual: dict[str, float]) -> CriterionGrade:
+    suggested, detail = rhythm_suggestion(analysis, c)
+    if c.id in manual:
+        earned = min(max(float(manual[c.id]), 0.0), c.max_points)
+        detail += f" → suggestion {suggested:g}, note saisie par l'enseignant"
+    else:
+        earned = suggested
+        detail += " → note suggérée (modifiable)"
+    return CriterionGrade(id=c.id, label=c.label, kind=c.kind, earned=round(earned, 4),
+                          max=c.max_points, detail=detail, suggested=round(suggested, 4))
+
+
 def compute_grade(analysis: Analysis, rubric: Rubric,
                   manual: dict[str, float] | None = None) -> Grade:
     manual = manual or {}
@@ -95,14 +118,21 @@ def compute_grade(analysis: Analysis, rubric: Rubric,
             crits.append(_grade_errors(analysis, c, rubric.repeat_policy, rubric.min_confidence))
         elif c.kind == "volume":
             crits.append(_grade_volume(analysis, c))
+        elif c.kind == "rhythm":
+            crits.append(_grade_rhythm(analysis, c, manual))
         else:
             v = min(max(float(manual.get(c.id, 0.0)), 0.0), c.max_points)
             crits.append(CriterionGrade(id=c.id, label=c.label, kind=c.kind, earned=v,
                                         max=c.max_points,
                                         detail="saisie manuelle" if c.id in manual else "non saisi"))
+    # Weighted mean of the criteria; with the default weight (= max points) it is the plain sum.
+    for c, g in zip(rubric.criteria, crits, strict=True):
+        g.weight = c.max_points if c.weight is None else c.weight
     raw_total = sum(c.earned for c in crits)
     raw_max = sum(c.max for c in crits)
-    scaled = raw_total / raw_max * rubric.total_points if raw_max > 0 else 0.0
+    weights = sum(g.weight for g in crits if g.max > 0)
+    ratio = sum(g.weight * g.earned / g.max for g in crits if g.max > 0) / weights if weights else 0
+    scaled = ratio * rubric.total_points
     total = min(_round(scaled, rubric.rounding), rubric.total_points)
     return Grade(raw_total=round(raw_total, 4), raw_max=raw_max, total=total,
                  out_of=rubric.total_points, criteria=crits)

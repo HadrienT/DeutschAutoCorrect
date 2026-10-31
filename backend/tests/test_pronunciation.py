@@ -59,3 +59,21 @@ def test_noise_below_threshold_ignored_but_big_mismatch_flagged():
 @pytest.mark.parametrize("exp,obs", [("a", "a"), ("ʃtraːsə", "ʃtraːzə")])
 def test_clean_cases(exp, obs):
     assert not is_pronunciation_error(compare_word(exp, obs))
+
+
+def test_ctc_decode_collapses_repeats_and_drops_blanks():
+    from app.pipeline.pronunciation.wav2vec2 import ctc_decode
+
+    vocab = {0: "<pad>", 1: "ʃ", 2: "uː", 3: "l", 4: "ə", 5: "<unk>"}
+    assert ctc_decode([0, 1, 1, 0, 2, 2, 5, 3, 0, 3, 4, 0], vocab) == ["ʃ", "uː", "l", "l", "ə"]
+
+
+def test_split_by_words_ignores_timestamps_and_neighbouring_speech():
+    from app.pipeline.pronunciation.compare import split_by_words
+
+    expected = [tokenize("ɪç"), tokenize("bɪn"), tokenize("alt")]
+    observed = tokenize(["ʊ", "n", "t", "ɪ", "k", "b", "ɪ", "n", "a", "l", "t", "v", "oː"])
+    assert split_by_words(expected, observed) == [["ɪ", "k"], ["b", "ɪ", "n"], ["a", "l", "t"]]
+    assert split_by_words(expected, []) == [[], [], []]
+    # a skipped word gets nothing, the others keep their phonemes
+    assert split_by_words(expected, tokenize("ɪçalt")) == [["ɪ", "ç"], [], ["a", "l", "t"]]

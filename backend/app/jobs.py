@@ -8,6 +8,7 @@ from .models import Analysis, Segment
 from .pipeline.merge import merge_errors
 from .pipeline.orchestrator import PipelineError, run_pipeline
 from .pipeline.pronunciation.step import analyze_pronunciation
+from .pipeline.reference import apply_reference
 from .pipeline.segments import compute_stats
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ def _run(ctx: AppContext, rec_id: str) -> None:
     try:
         analysis, wav = run_pipeline(
             ctx.recording_dir(rec_id) / rec["audio_path"], ctx.recording_dir(rec_id),
-            ctx.engines, progress)
+            ctx.engines, progress, rec["reference_text"])
         ctx.db.save_analysis(rec_id, analysis)
         ctx.db.update_recording(rec_id, status="done", stage="done", progress=100,
                                 duration=analysis.stats.duration, error="")
@@ -55,10 +56,12 @@ def recheck_segment(ctx: AppContext, rec_id: str, analysis: Analysis, seg: Segme
     """Run correction + pronunciation on one segment that just became graded."""
     warnings: list[str] = []
     new = []
-    try:
-        new += ctx.engines.corrector.correct([seg])
-    except Exception as e:
-        warnings.append(f"Correction du segment impossible : {e}")
+    reference = (ctx.db.get_recording(rec_id) or {}).get("reference_text", "")
+    if not reference.strip():
+        try:
+            new += ctx.engines.corrector.correct([seg])
+        except Exception as e:
+            warnings.append(f"Correction du segment impossible : {e}")
     wav = ctx.recording_dir(rec_id) / "audio.wav"
     try:
         if wav.exists():
@@ -67,5 +70,7 @@ def recheck_segment(ctx: AppContext, rec_id: str, analysis: Analysis, seg: Segme
         warnings.append(f"Prononciation du segment impossible : {e}")
     existing = [e for e in analysis.errors if e.segment_id != seg.id or e.source == "manual"]
     analysis.errors = merge_errors(existing, new)
+    if reference.strip():
+        apply_reference(analysis, reference)
     analysis.stats = compute_stats(analysis, analysis.stats.duration)
     return warnings

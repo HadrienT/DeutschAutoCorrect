@@ -96,14 +96,45 @@ def classify_segments(segments: list[Segment]) -> list[Segment]:
     return segments
 
 
+MIN_PAUSE = 0.5  # seconds; shorter gaps are within ASR timestamp noise
+
+
+def _rhythm(analysis: Analysis) -> tuple[float, list[float]]:
+    """Speech rate (words/min, pauses included) and silences between consecutive student words.
+
+    Only uninterrupted runs of graded segments count: a teacher intervention is not a pause.
+    """
+    words = 0
+    seconds = 0.0
+    pauses: list[float] = []
+    prev_end: float | None = None
+    for seg in analysis.segments:
+        if not seg.graded:
+            prev_end = None
+            continue
+        spans = [(w.start, w.end) for w in seg.words] or [(seg.start, seg.end)]
+        words += len(seg.words) if seg.words else len(seg.text.split())
+        for start, end in spans:
+            if prev_end is not None:
+                gap = start - prev_end
+                seconds += max(0.0, gap)
+                if gap >= MIN_PAUSE:
+                    pauses.append(round(gap, 2))
+            seconds += max(0.0, end - start)
+            prev_end = end
+    return (round(words / seconds * 60, 1) if seconds > 0 else 0.0), pauses
+
+
 def compute_stats(analysis: Analysis, duration: float) -> Stats:
     graded = [s for s in analysis.segments if s.graded]
     words = sum(len(s.words) if s.words else len(s.text.split()) for s in graded)
     secs = sum(max(0.0, s.end - s.start) for s in graded)
+    wpm, pauses = _rhythm(analysis)
     return Stats(
         duration=round(duration, 2), student_words=words, student_speech_seconds=round(secs, 2),
         speech_ratio=round(secs / duration, 3) if duration > 0 else 0.0,
         graded_segments=len(graded),
         teacher_segments=sum(s.role == "teacher" for s in analysis.segments),
         french_segments=sum(s.language == "fr" for s in analysis.segments),
+        words_per_minute=wpm, pauses=pauses,
     )

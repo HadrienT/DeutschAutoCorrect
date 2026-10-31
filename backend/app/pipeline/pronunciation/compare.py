@@ -98,6 +98,39 @@ def align(exp: list[str], obs: list[str]) -> tuple[float, list[Op]]:
     return D[n][m], ops
 
 
+def split_by_words(expected: list[list[str]], observed: list[str]) -> list[list[str]]:
+    """Distribute a segment's observed phonemes over its words.
+
+    ASR word timestamps are off by a few hundred ms, too coarse to crop the audio word by word:
+    the whole segment is recognised, then aligned with the concatenated expected phonemes.
+    Observed phonemes before the first / after the last expected one are free (the audio window
+    is padded and may catch neighbouring speech).
+    """
+    owner = [w for w, toks in enumerate(expected) for _ in toks]
+    exp = [t for toks in expected for t in toks]
+    n, m = len(exp), len(observed)
+    out: list[list[str]] = [[] for _ in expected]
+    if not n or not m:
+        return out
+    D = [[0.0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        D[i][0] = float(i)
+        for j in range(1, m + 1):
+            D[i][j] = min(D[i - 1][j] + 1, D[i][j - 1] + 1,
+                          D[i - 1][j - 1] + sub_cost(exp[i - 1], observed[j - 1]))
+    i, j = n, min(range(m + 1), key=lambda k: D[n][k])
+    while i > 0 and j > 0:
+        if abs(D[i][j] - (D[i - 1][j - 1] + sub_cost(exp[i - 1], observed[j - 1]))) < 1e-9:
+            out[owner[i - 1]].append(observed[j - 1])
+            i, j = i - 1, j - 1
+        elif abs(D[i][j] - (D[i - 1][j] + 1)) < 1e-9:
+            i -= 1
+        else:  # extra sound: attribute it to the word being pronounced
+            out[owner[min(i, n - 1)]].append(observed[j - 1])
+            j -= 1
+    return [toks[::-1] for toks in out]
+
+
 def _classify(op: Op, exp: list[str]) -> Issue | None:
     e, o, last = op.exp, op.obs, op.exp_idx == len(exp) - 1
     if e == "ç" and o != "ç":

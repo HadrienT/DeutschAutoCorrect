@@ -10,12 +10,16 @@ from .base import ProgressCb
 class FasterWhisperAsr:
     name = "faster-whisper"
 
-    def __init__(self, model: str = "large-v3", device: str = "auto", compute_type: str = "default"):
+    def __init__(self, model: str = "large-v3", device: str = "auto", compute_type: str = "default",
+                 device_index: int = 0):
         try:
             from faster_whisper import WhisperModel  # lazy: heavy dependency
         except ImportError as e:  # pragma: no cover
             raise RuntimeError("faster-whisper n'est pas installé (pip install -e .[asr])") from e
-        self._model = WhisperModel(model, device=device, compute_type=compute_type)
+        # a GPU index left in the configuration is meaningless on CPU
+        device_index = 0 if device == "cpu" else device_index
+        self._model = WhisperModel(model, device=device, device_index=device_index,
+                                   compute_type=compute_type)
         self.name = f"faster-whisper:{model}"
 
     def transcribe(self, wav_path: Path, progress: ProgressCb | None = None) -> list[Segment]:

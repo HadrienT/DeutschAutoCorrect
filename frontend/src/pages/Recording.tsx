@@ -141,6 +141,7 @@ export function RecordingPage({ id }: { id: string }) {
               onRubric={(rid) => void api.assignRubric(id, { rubric_id: rid }).then((r) => setRec((x) => x && { ...x, grade: r.grade, rubric: r.rubric, manual: r.manual }))}
               onManual={(cid, v) => void api.assignRubric(id, { manual: { ...rec.manual, [cid]: v } }).then((r) => setRec((x) => x && { ...x, grade: r.grade, manual: r.manual }))} />
           )}
+          <ReferenceCard text={rec.reference_text} onSave={(t) => api.setReference(id, t).then(() => { setRec(null); return load(); }).catch((e) => toast((e as Error).message, true))} />
           <div className="card card-pad">
             <div className="section-title">
               Erreurs <span className="badge">{visible.length}</span>
@@ -162,6 +163,28 @@ export function RecordingPage({ id }: { id: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Reference text of a recitation / reading: the student's words are compared with it. */
+function ReferenceCard({ text, onSave }: { text: string; onSave: (t: string) => void }) {
+  const [draft, setDraft] = useState(text);
+  return (
+    <details className="card card-pad no-print" open={text !== ""}>
+      <summary className="section-title" style={{ cursor: "pointer", marginBottom: 0 }}>
+        Texte de référence <span className="badge">{text ? "récitation / lecture" : "aucun"}</span>
+      </summary>
+      <p className="muted" style={{ fontSize: 12.5, margin: "8px 0" }}>
+        Le texte que l'élève devait dire. Chaque mot oublié ou remplacé devient une erreur « Texte de référence » ;
+        la correction grammaticale n'est alors pas lancée.
+      </p>
+      <textarea rows={5} style={{ width: "100%" }} value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Texte de référence" placeholder="Collez ici le texte à réciter ou à lire…" />
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="btn btn-sm btn-primary" disabled={draft.trim() === text.trim()}
+          onClick={() => { if (confirm("Réanalyser l'enregistrement avec ce texte ? Vos corrections actuelles seront effacées.")) onSave(draft); }}>
+          Enregistrer et réanalyser</button>
+      </div>
+    </details>
   );
 }
 

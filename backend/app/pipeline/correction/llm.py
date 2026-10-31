@@ -1,11 +1,14 @@
-"""Claude-based corrector: structured JSON output over the faithful transcript."""
+"""LLM correctors (Claude, or any OpenAI-compatible server): structured JSON output over the
+faithful transcript."""
 from __future__ import annotations
 
+import copy
 import json
+import re
 from typing import Any
 
 from ...models import DetectedError, Segment
-from .base import locate, seg_words
+from .base import locate, norm, seg_words
 
 SYSTEM_PROMPT = """\
 Tu es un professeur d'allemand (collège, niveaux A1–B1) qui corrige une évaluation orale.
@@ -66,8 +69,18 @@ SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+SUBTYPES = ["case", "gender", "word_order", "agreement", "preposition", "article", "negation",
+            "plural", "person_ending", "auxiliary", "participle", "tense", "separable_verb", "modal",
+            "irregular", "wrong_word", "french_word", "false_friend", "invented_word",
+            "missing_word", "other"]
+# Smaller local models drift without a closed list (French labels, free text).
+LOCAL_SCHEMA: dict[str, Any] = copy.deepcopy(SCHEMA)
+LOCAL_SCHEMA["properties"]["errors"]["items"]["properties"]["subtype"]["enum"] = SUBTYPES
+
 CHUNK = 40
+LOCAL_CHUNK = 4  # local models lose recall on long segment lists
 LOW_CONF = 0.6
+_CONF_MARK = re.compile(r"\{\d+%\}")  # low-confidence annotation, sometimes copied in quotes
 
 
 def render_segment(seg: Segment) -> str:
@@ -96,7 +109,11 @@ def parse_errors(raw: str, segments: list[Segment]) -> list[DetectedError]:
             seg = by_id.get(str(it["segment_id"]))
             if seg is None:
                 continue
-            start, end = locate(seg, str(it.get("quote", "")))
+            quote = _CONF_MARK.sub("", str(it.get("quote", "")))
+            expected = _CONF_MARK.sub("", str(it.get("expected", "")))
+            if norm(quote) == norm(expected):
+                continue  # no-op "correction": the model flagged a correct phrase
+            start, end = locate(seg, quote)
             cat = it["category"]
             if cat not in ("grammar", "conjugation", "vocabulary"):
                 continue
@@ -104,8 +121,8 @@ def parse_errors(raw: str, segments: list[Segment]) -> list[DetectedError]:
             out.append(DetectedError(
                 category=cat, subtype=str(it.get("subtype") or "other"),
                 severity=sev if sev in ("minor", "major") else "minor",
-                segment_id=seg.id, start=start, end=end, heard=str(it.get("quote", "")),
-                expected=str(it.get("expected", "")), explanation=str(it.get("explanation", "")),
+                segment_id=seg.id, start=start, end=end, heard=quote,
+                expected=expected, explanation=str(it.get("explanation", "")),
                 confidence=min(1.0, max(0.0, float(it.get("confidence", 0.7)))), source="llm"))
         except (KeyError, TypeError, ValueError):
             continue
@@ -142,4 +159,64 @@ class AnthropicCorrector:
         for i in range(0, len(segments), CHUNK):
             chunk = segments[i:i + CHUNK]
             out.extend(parse_errors(self._call(chunk), chunk))
+        return out
+
+
+class OpenAICompatCorrector:
+    """Corrector on a local OpenAI-compatible server (llama.cpp, vLLM, Ollama...)."""
+
+    def __init__(self, base_url: str = "http://127.0.0.1:8000/v1", model: str = "",
+                 api_key: str = "", timeout: float = 300.0, chunk: int = LOCAL_CHUNK,
+                 client: Any = None):
+        if client is None:
+            import httpx  # lazy
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            client = httpx.Client(base_url=base_url.rstrip("/") + "/", headers=headers,
+                                  timeout=timeout)
+        self._client = client
+        self._model = model
+        self._chunk = max(1, chunk)
+        self.name = f"openai:{model or 'auto'}"
+
+    def _served_model(self) -> str:
+        """Model to request. The server may hot-swap models: refuse to grade with another one."""
+        try:
+            resp = self._client.get("models")
+            resp.raise_for_status()
+            served = [str(m["id"]) for m in resp.json()["data"]]
+        except Exception as e:
+            raise RuntimeError(f"Serveur LLM local injoignable ({e})") from e
+        if not served:
+            raise RuntimeError("Le serveur LLM local ne sert aucun modèle")
+        if not self._model:
+            return served[0]
+        if self._model not in served:
+            raise RuntimeError(f"Le serveur LLM local sert « {', '.join(served)} » et non "
+                               f"« {self._model} »")
+        return self._model
+
+    def _call(self, model: str, segments: list[Segment]) -> str:
+        resp = self._client.post("chat/completions", json={
+            "model": model,
+            "max_tokens": 8000,
+            "temperature": 0,
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                         {"role": "user", "content": build_user_message(segments)}],
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": "errors", "strict": True, "schema": LOCAL_SCHEMA}},
+        })
+        resp.raise_for_status()
+        choice = resp.json()["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise RuntimeError("Réponse du correcteur tronquée (max_tokens)")
+        return choice["message"].get("content") or ""
+
+    def correct(self, segments: list[Segment]) -> list[DetectedError]:
+        if not segments:
+            return []
+        model = self._served_model()
+        out: list[DetectedError] = []
+        for i in range(0, len(segments), self._chunk):
+            chunk = segments[i:i + self._chunk]
+            out.extend(parse_errors(self._call(model, chunk), chunk))
         return out

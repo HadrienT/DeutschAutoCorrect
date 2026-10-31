@@ -16,7 +16,7 @@ from app.pipeline.pronunciation.mock import MockPronunciation
 
 @pytest.fixture
 def client(tmp_path):
-    s = Settings(data_dir=tmp_path / "data", worker_threads=1)
+    s = Settings(_env_file=None, data_dir=tmp_path / "data", worker_threads=1)
     ctx = AppContext(s, Database(":memory:"),
                      Engines(MockAsr(), RulesCorrector(), MockPronunciation()))
     with TestClient(create_app(s, ctx)) as c:
@@ -111,7 +111,7 @@ def test_regrade_segment_runs_checks(client, wav_bytes):
 
 def test_rubric_crud_and_preview(client, wav_bytes):
     rubs = client.get("/api/rubrics").json()
-    assert len(rubs) == 1
+    assert len(rubs) == 2  # standard + recitation presets
     new = {**rubs[0], "name": "Strict /10", "total_points": 10, "id": None}
     r = client.post("/api/rubrics", json=new)
     assert r.status_code == 201 and r.json()["id"] != rubs[0]["id"]
@@ -121,7 +121,8 @@ def test_rubric_crud_and_preview(client, wav_bytes):
     bad = {**new, "criteria": [{**new["criteria"][0], "category": None}]}
     assert client.post("/api/rubrics", json=bad).status_code == 422
     assert client.delete(f"/api/rubrics/{r.json()['id']}").status_code == 204
-    assert client.delete(f"/api/rubrics/{rubs[0]['id']}").status_code == 409
+    assert client.delete(f"/api/rubrics/{rubs[1]['id']}").status_code == 204
+    assert client.delete(f"/api/rubrics/{rubs[0]['id']}").status_code == 409  # last one stays
 
 
 def test_exports(client, wav_bytes):
@@ -136,3 +137,55 @@ def test_bad_upload(client):
     assert r.status_code == 400
     d = upload(client, b"not audio at all", title="bad")
     assert d["status"] == "failed" and d["error"]
+
+
+def test_reference_text_flow(client, wav_bytes):
+    d = upload(client, wav_bytes, reference_text="Hallo ich heiße Léa und ich wohne in Berlin")
+    rid = d["id"]
+    assert d["reference_text"].startswith("Hallo")
+    assert d["analysis"]["engines"]["corrector"] == "texte de référence"
+    assert all(e["source"] in ("reference", "phonemes", "asr_confidence")
+               for e in d["analysis"]["errors"])
+    assert any(e["category"] == "text" for e in d["analysis"]["errors"])
+    recitation = next(r for r in client.get("/api/rubrics").json() if r["criteria"][0]["id"] == "text")
+    g = client.put(f"/api/recordings/{rid}/rubric", json={"rubric_id": recitation["id"]}).json()["grade"]
+    assert [c["id"] for c in g["criteria"]] == ["text", "pron", "rhythm"]
+    rhythm = g["criteria"][2]
+    assert rhythm["suggested"] is not None and rhythm["earned"] == rhythm["suggested"]
+    g = client.put(f"/api/recordings/{rid}/rubric", json={"manual": {"rhythm": 0.5}}).json()["grade"]
+    assert g["criteria"][2]["earned"] == 0.5
+    g = client.put(f"/api/recordings/{rid}/rubric", json={"manual": {"rhythm": None}}).json()["grade"]
+    assert g["criteria"][2]["earned"] == rhythm["suggested"]  # override removed
+    # clearing the reference re-analyses with the grammar corrector
+    assert client.put(f"/api/recordings/{rid}/reference", json={"text": ""}).status_code == 202
+    for _ in range(100):
+        d = client.get(f"/api/recordings/{rid}").json()
+        if d["status"] == "done":
+            break
+        time.sleep(0.05)
+    assert not any(e["category"] == "text" for e in d["analysis"]["errors"])
+
+
+def test_existing_database_is_migrated(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.sqlite3"
+    c = sqlite3.connect(path)
+    c.executescript("""
+      CREATE TABLE rubrics (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+        json TEXT NOT NULL, created_at REAL NOT NULL);
+      CREATE TABLE recordings (id TEXT PRIMARY KEY, title TEXT NOT NULL,
+        student_name TEXT NOT NULL DEFAULT '', filename TEXT NOT NULL,
+        audio_path TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'queued',
+        stage TEXT NOT NULL DEFAULT 'queued', progress REAL NOT NULL DEFAULT 0,
+        error TEXT NOT NULL DEFAULT '', duration REAL NOT NULL DEFAULT 0, created_at REAL NOT NULL,
+        rubric_id INTEGER, analysis_json TEXT, manual_json TEXT NOT NULL DEFAULT '{}');
+      INSERT INTO recordings(id,title,filename,created_at) VALUES('a','t','f',0);
+    """)
+    c.commit()
+    c.close()
+    db = Database(path)
+    assert db.get_recording("a")["reference_text"] == ""
+    assert len(db.list_rubrics()) == 2
+    db.close()
+    assert len(Database(path).list_rubrics()) == 2  # the preset is added only once

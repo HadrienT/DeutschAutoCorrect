@@ -24,16 +24,19 @@ export const api = {
   health: () => req<Health>("/api/health"),
   listRecordings: () => req<RecordingSummary[]>("/api/recordings"),
   getRecording: (id: string) => req<RecordingDetail>(`/api/recordings/${id}`),
-  upload: (file: File, title: string, student: string, rubricId: number | null) => {
+  upload: (file: File, title: string, student: string, rubricId: number | null, referenceText = "") => {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("title", title);
     fd.append("student_name", student);
     if (rubricId != null) fd.append("rubric_id", String(rubricId));
+    if (referenceText.trim()) fd.append("reference_text", referenceText);
     return req<RecordingSummary>("/api/recordings", { method: "POST", body: fd });
   },
   deleteRecording: (id: string) => req<void>(`/api/recordings/${id}`, { method: "DELETE" }),
   reanalyze: (id: string) => req<RecordingSummary>(`/api/recordings/${id}/reanalyze`, { method: "POST" }),
+  setReference: (id: string, text: string) =>
+    req<RecordingSummary>(`/api/recordings/${id}/reference`, json("PUT", { text })),
   peaks: (id: string, bins = 900) =>
     req<{ peaks: number[]; duration: number }>(`/api/recordings/${id}/peaks?bins=${bins}`),
   audioUrl: (id: string) => `/api/recordings/${id}/audio`,
@@ -46,7 +49,7 @@ export const api = {
     req<EditResult>(`/api/recordings/${id}/errors`, json("POST", body)),
   patchSegment: (id: string, sid: string, patch: Record<string, unknown>) =>
     req<EditResult>(`/api/recordings/${id}/segments/${sid}`, json("PATCH", patch)),
-  assignRubric: (id: string, body: { rubric_id?: number; manual?: Record<string, number> }) =>
+  assignRubric: (id: string, body: { rubric_id?: number; manual?: Record<string, number | null> }) =>
     req<{ grade: Grade; rubric: Rubric; manual: Record<string, number> }>(
       `/api/recordings/${id}/rubric`, json("PUT", body)),
   listRubrics: () => req<Rubric[]>("/api/rubrics"),

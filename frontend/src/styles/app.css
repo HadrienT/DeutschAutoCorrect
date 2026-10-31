@@ -6,6 +6,7 @@
   --c-grammar: #2563eb; --c-grammar-soft: #e0ebff;
   --c-conjugation: #7c3aed; --c-conjugation-soft: #ede4ff;
   --c-vocabulary: #d97706; --c-vocabulary-soft: #fdf0d5;
+  --c-text: #0d9488; --c-text-soft: #d5f3ef;
   --shadow: 0 1px 2px rgba(20, 24, 45, .06), 0 6px 24px rgba(20, 24, 45, .06);
   --radius: 14px; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --wave: #b8bdd6; --wave-played: #4f46e5;
@@ -19,6 +20,7 @@
     --c-grammar: #60a5fa; --c-grammar-soft: #172646;
     --c-conjugation: #a78bfa; --c-conjugation-soft: #2a1f4d;
     --c-vocabulary: #fbbf24; --c-vocabulary-soft: #3a2d10;
+    --c-text: #2dd4bf; --c-text-soft: #10332f;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 28px rgba(0, 0, 0, .35);
     --wave: #4a5178; --wave-played: #8b85ff;
   }
@@ -31,6 +33,7 @@
   --c-grammar: #60a5fa; --c-grammar-soft: #172646;
   --c-conjugation: #a78bfa; --c-conjugation-soft: #2a1f4d;
   --c-vocabulary: #fbbf24; --c-vocabulary-soft: #3a2d10;
+  --c-text: #2dd4bf; --c-text-soft: #10332f;
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 28px rgba(0, 0, 0, .35);
   --wave: #4a5178; --wave-played: #8b85ff;
 }
@@ -193,7 +196,7 @@ label.field { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); f
 .crit:first-of-type { border-top: 0; }
 .bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .bar > i { display: block; height: 100%; border-radius: 999px; background: var(--primary); transition: width .35s; }
-.manual-input { width: 78px; text-align: right; }
+input.manual-input { width: 78px; flex: none; text-align: right; }
 
 /* rubric editor */
 .rub-layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; align-items: start; }

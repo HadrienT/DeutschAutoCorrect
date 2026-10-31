@@ -48,3 +48,23 @@ def test_diarization_labels_mark_other_speakers():
     out = classify_segments(segs)
     assert [s.role for s in out] == ["student", "other", "student"]
     assert [s.graded for s in out] == [True, False, True]
+
+
+def test_rhythm_stats_ignore_teacher_interruptions():
+    from app.models import Analysis, Word
+    from app.pipeline.segments import compute_stats
+
+    def seg(sid, times, graded=True):
+        words = [Word(text="w", start=a, end=b) for a, b in times]
+        return Segment(id=sid, start=times[0][0], end=times[-1][1], text="w " * len(words),
+                       words=words, graded=graded)
+
+    a = Analysis(segments=[
+        seg("s1", [(0, 1), (1.2, 2), (4, 5)]),       # 0.2 s gap (ignored), 2 s pause
+        seg("s2", [(5.6, 6)]),                       # 0.6 s pause across segments
+        seg("s3", [(6, 10)], graded=False),          # teacher speaks
+        seg("s4", [(12, 13)]),                       # not a pause: interrupted
+    ])
+    stats = compute_stats(a, 13)
+    assert stats.pauses == [2.0, 0.6]
+    assert stats.words_per_minute == 42.9  # 5 words in 6 s + 1 s

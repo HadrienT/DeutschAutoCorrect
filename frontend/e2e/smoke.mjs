@@ -1,10 +1,10 @@
-// End-to-end smoke test + screenshots. Usage: BASE=http://localhost:8000 node e2e/smoke.mjs
+// End-to-end smoke test + screenshots. Usage: BASE=http://localhost:8010 node e2e/smoke.mjs
 // Requires a running backend with a demo recording (make demo) and Playwright (global install ok).
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { chromium } = (() => { try { return require("playwright"); } catch { return require("/node-tools/node_modules/playwright"); } })();
 
-const BASE = process.env.BASE ?? "http://localhost:8000";
+const BASE = process.env.BASE ?? "http://localhost:8010";
 const OUT = process.env.OUT ?? "../docs/screenshots";
 const exe = process.env.CHROMIUM ?? undefined;
 const assert = (c, m) => { if (!c) { console.error("FAIL:", m); process.exitCode = 1; } else console.log("ok  :", m); };

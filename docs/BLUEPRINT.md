@@ -40,7 +40,7 @@ Sortie : transcription **fidèle** (erreurs conservées), liste d'erreurs class�
 2. **asr** — `AsrEngine.transcribe(wav) -> list[Segment]` avec mots horodatés + probabilités. Impl. : `faster_whisper`, `mock`.
 3. **segments** — `LanguageDetector` (par segment), `RoleClassifier` (student/teacher/other), marquage `graded` (élève + allemand uniquement).
 4. **pronunciation** — `PronunciationEngine.analyze(wav, words) -> list[WordPhonemes]` puis `compare` (pur, testé) → erreurs `pronunciation`. Impl. : `wav2vec2`, `none`, `mock`.
-5. **correction** — `Corrector.correct(student_segments) -> list[DetectedError]` (grammar / conjugation / vocabulary). Impl. : `anthropic`, `rules`.
+5. **correction** — `Corrector.correct(student_segments) -> list[DetectedError]` (grammar / conjugation / vocabulary). Impl. : `anthropic`, `openai` (serveur local compatible OpenAI), `rules`.
 6. **merge** — dédoublonnage (même mot, même catégorie), ancrage temporel (début/fin du mot fautif), tri, identifiants stables.
 
 Chaque étape publie `stage` + `progress` (0–100) dans la table `recordings` ; l'UI interroge `GET /api/recordings/{id}`.
@@ -90,11 +90,15 @@ SQLite (stdlib `sqlite3`, pas d'ORM) : `recordings(id,title,student_name,filenam
 
 ### 2.6 Configuration (variables d'environnement, préfixe `DAC_`)
 
-`DAC_ASR_BACKEND=faster-whisper|mock`, `DAC_WHISPER_MODEL=large-v3`, `DAC_WHISPER_DEVICE=auto`, `DAC_PRON_BACKEND=wav2vec2|none|mock`, `DAC_CORRECTOR_BACKEND=anthropic|rules`, `DAC_ANTHROPIC_MODEL=claude-opus-5-5`, `ANTHROPIC_API_KEY`, `DAC_DATA_DIR=./data`. Défaut sûr : `mock/none/rules` si les dépendances lourdes sont absentes (le `/api/health` l'indique).
+`DAC_ASR_BACKEND=faster-whisper|mock`, `DAC_WHISPER_MODEL=large-v3`, `DAC_WHISPER_DEVICE=auto`, `DAC_WHISPER_DEVICE_INDEX=0`, `DAC_WHISPER_COMPUTE_TYPE=default`, `DAC_PRON_BACKEND=wav2vec2|none|mock`, `DAC_PHONEME_DEVICE=auto`, `DAC_CORRECTOR_BACKEND=anthropic|openai|rules`, `DAC_ANTHROPIC_MODEL=claude-opus-5-5`, `ANTHROPIC_API_KEY`, `DAC_LLM_BASE_URL=http://127.0.0.1:8000/v1`, `DAC_LLM_MODEL` (vide = modèle servi), `DAC_LLM_API_KEY`, `DAC_DATA_DIR=./data`. Défaut sûr : `mock/none/rules` si les dépendances lourdes sont absentes (le `/api/health` l'indique).
 
 ## 3. Notation — règles de calcul
 
 Pour chaque critère `errors` : on prend les erreurs **non rejetées** de la catégorie, sur segments `graded` ; `repeat_policy` ∈ `count_all | once_per_subtype | once_per_expected` (une même faute répétée ne pénalise qu'une fois) ; points = `max_points − Σ pénalités`, bornés à `[0, max]` ; option `cap_deduction`. Critère `volume` : paliers par nombre de mots d'élève (`[{min_words, points}]`). Critère `manual` : valeur saisie par l'enseignant. Total = Σ ; mise à l'échelle sur `total_points` ; arrondi (`none|0.5|1`).
+
+Total : moyenne pondérée des critères, chaque critère valant `earned/max` avec un coefficient `weight` (défaut = `max_points`, ce qui redonne Σ points / Σ max). Critère `rhythm` : suggestion `max − pause_penalty × (pauses ≥ pause_seconds) − slow_penalty si débit < min_wpm`, remplacée par la saisie de l'enseignant si elle existe ; les pauses et le débit (`Stats.pauses`, `Stats.words_per_minute`) ne comptent que les suites ininterrompues de segments notés.
+
+**Texte de référence** (`recordings.reference_text`) : alignement mot à mot (nombres épelés, ponctuation ignorée) entre le texte et les mots des segments notés ; une erreur `text` par mot oublié (`omitted_word`) ou remplacé (`wrong_word`), mots en trop ignorés ; le correcteur grammatical est alors sauté. Barème préinstallé « Récitation / lecture » : texte /20 (−2), prononciation /20 (−2), rythme /2.
 
 ## 4. Qualité
 

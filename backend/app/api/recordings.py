@@ -27,6 +27,7 @@ from ..models import (
 )
 from ..pipeline.audio import compute_peaks, read_wav
 from ..pipeline.merge import error_id
+from ..pipeline.reference import apply_reference
 from ..pipeline.segments import compute_stats
 from ..scoring.engine import compute_grade
 from .deps import get_ctx, load_analysis, load_recording, rubric_for
@@ -63,7 +64,7 @@ def list_recordings(ctx: AppContext = Depends(get_ctx)) -> list[dict]:
 @router.post("", status_code=201)
 async def create_recording(
     file: UploadFile = File(...), title: str = Form(""), student_name: str = Form(""),
-    rubric_id: int | None = Form(None), ctx: AppContext = Depends(get_ctx),
+    rubric_id: int | None = Form(None), reference_text: str = Form(""), ctx: AppContext = Depends(get_ctx),
 ) -> dict:
     rec_id = uuid.uuid4().hex[:12]
     ext = Path(file.filename or "audio").suffix.lower() or ".bin"
@@ -87,7 +88,7 @@ async def create_recording(
         raise HTTPException(400, "Barème inconnu")
     name = file.filename or dest.name
     ctx.db.create_recording(rec_id, title.strip() or Path(name).stem, student_name.strip(), name,
-                            rubric_id or ctx.db.default_rubric_id())
+                            rubric_id or ctx.db.default_rubric_id(), reference_text.strip())
     ctx.db.update_recording(rec_id, audio_path=dest.name)
     submit_analysis(ctx, rec_id)
     return summary(ctx.db.get_recording(rec_id))  # type: ignore[arg-type]
@@ -100,7 +101,7 @@ def get_recording(rec_id: str, ctx: AppContext = Depends(get_ctx)) -> dict:
     rubric = rubric_for(ctx, rec)
     out = summary(rec, _grade(ctx, rec, analysis))
     out.update(analysis=analysis.model_dump() if analysis else None, rubric=rubric.model_dump(),
-               manual=ctx.db.get_manual(rec_id))
+               manual=ctx.db.get_manual(rec_id), reference_text=rec["reference_text"])
     return out
 
 
@@ -116,6 +117,20 @@ def delete_recording(rec_id: str, ctx: AppContext = Depends(get_ctx)) -> Respons
 @router.post("/{rec_id}/reanalyze", status_code=202)
 def reanalyze(rec_id: str, ctx: AppContext = Depends(get_ctx)) -> dict:
     load_recording(ctx, rec_id)
+    submit_analysis(ctx, rec_id)
+    return summary(ctx.db.get_recording(rec_id))  # type: ignore[arg-type]
+
+
+class ReferenceText(BaseModel):
+    text: str = ""
+
+
+@router.put("/{rec_id}/reference", status_code=202)
+def set_reference(rec_id: str, body: ReferenceText, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Set / clear the reference text; the recording is analysed again (it changes which
+    detectors run)."""
+    load_recording(ctx, rec_id)
+    ctx.db.update_recording(rec_id, reference_text=body.text.strip())
     submit_analysis(ctx, rec_id)
     return summary(ctx.db.get_recording(rec_id))  # type: ignore[arg-type]
 
@@ -180,7 +195,7 @@ class SegmentPatch(BaseModel):
 
 class RubricAssign(BaseModel):
     rubric_id: int | None = None
-    manual: dict[str, float] | None = None
+    manual: dict[str, float | None] | None = None  # null removes a manual value
 
 
 def _result(ctx: AppContext, rec_id: str, analysis: Analysis, **extra) -> dict:
@@ -244,6 +259,9 @@ def patch_segment(rec_id: str, sid: str, body: SegmentPatch,
     warnings: list[str] = []
     if seg.graded and not was_graded and not any(e.segment_id == sid for e in analysis.errors):
         warnings = recheck_segment(ctx, rec_id, analysis, seg)
+    reference = load_recording(ctx, rec_id)["reference_text"]
+    if reference.strip():  # the alignment with the reference depends on which segments count
+        apply_reference(analysis, reference)
     analysis.stats = compute_stats(analysis, analysis.stats.duration)
     return _result(ctx, rec_id, analysis, warnings=warnings)
 
@@ -256,7 +274,7 @@ def assign_rubric(rec_id: str, body: RubricAssign, ctx: AppContext = Depends(get
             raise HTTPException(404, "Barème introuvable")
         ctx.db.update_recording(rec_id, rubric_id=body.rubric_id)
     if body.manual is not None:
-        ctx.db.set_manual(rec_id, body.manual)
+        ctx.db.set_manual(rec_id, {k: v for k, v in body.manual.items() if v is not None})
     rec = ctx.db.get_recording(rec_id)
     return {"grade": _grade(ctx, rec, ctx.db.get_analysis(rec_id)),  # type: ignore[arg-type]
             "rubric": rubric_for(ctx, rec).model_dump(), "manual": ctx.db.get_manual(rec_id)}  # type: ignore[arg-type]

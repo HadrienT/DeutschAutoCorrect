@@ -1,0 +1,55 @@
+# docker compose up -d --build   → http://localhost:8010 (front + API, moteurs réels)
+# Réglages dans .env (voir .env.example). Nécessite nvidia-container-toolkit pour le GPU.
+services:
+  app:
+    build: .
+    image: deutschautocorrect
+    # Host network: the LLM server usually listens on the host's loopback only (127.0.0.1:8000).
+    network_mode: host
+    user: "${DAC_UID:-1000}:${DAC_GID:-1000}"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DAC_DATA_DIR: /data
+      DAC_BIND: ${DAC_BIND:-127.0.0.1}
+      DAC_API_PORT: ${DAC_API_PORT:-8010}
+    volumes:
+      - ./data:/data
+      # Whisper / wav2vec2 weights: downloaded once, shared with the host cache.
+      - ${DAC_HF_CACHE:-~/.cache/huggingface}:/cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['DAC_API_PORT'] + '/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 180s
+    restart: unless-stopped
+
+  # Optional: a dedicated llama.cpp server, for machines without one already running.
+  #   docker compose --profile llm up -d    then    DAC_LLM_BASE_URL=http://127.0.0.1:8012/v1
+  llm:
+    profiles: ["llm"]
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    network_mode: host
+    volumes:
+      - ${DAC_LLM_MODELS_DIR:-/opt/llm/models}:/models:ro
+    command: >
+      --host 127.0.0.1 --port ${DAC_LLM_PORT:-8012}
+      --model /models/${DAC_LLM_GGUF:-mistral-small-3.2-24b-instruct-2506-q4_k_m.gguf}
+      --alias ${DAC_LLM_ALIAS:-mistral-small-3.2}
+      --ctx-size 16384 --n-gpu-layers all --flash-attn on
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

@@ -110,8 +110,12 @@ export function RubricsPage() {
                   <label className="field">Type
                     <select value={c.kind} onChange={(e) => setCrit(i, { kind: e.target.value as Criterion["kind"], category: e.target.value === "errors" ? c.category ?? "grammar" : null,
                       tiers: e.target.value === "volume" && c.tiers.length === 0 ? [{ min_words: 0, points: 0 }, { min_words: 30, points: c.max_points }] : c.tiers })}>
-                      <option value="errors">Erreurs d'une catégorie</option><option value="volume">Quantité de langue</option><option value="manual">Saisie manuelle</option></select></label>
+                      <option value="errors">Erreurs d'une catégorie</option><option value="volume">Quantité de langue</option><option value="rhythm">Rythme (suggestion automatique)</option><option value="manual">Saisie manuelle</option></select></label>
                   <label className="field">Points max<input type="number" min={0} step="any" value={c.max_points} onChange={(e) => setCrit(i, { max_points: num(e.target.value) })} /></label>
+                </div>
+                <div className="grid-4">
+                  <label className="field" title="Poids du critère dans la moyenne pondérée. Vide : le critère pèse ses points max (simple somme des points).">Coefficient
+                    <input type="number" min={0} step="any" placeholder={`${fmtNum(c.max_points)} (= points max)`} value={c.weight ?? ""} onChange={(e) => setCrit(i, { weight: e.target.value === "" ? null : num(e.target.value) })} /></label>
                 </div>
                 {c.kind === "errors" && (
                   <div className="grid-4">
@@ -136,6 +140,17 @@ export function RubricsPage() {
                     <button className="btn btn-sm" style={{ justifySelf: "start" }} onClick={() => setCrit(i, { tiers: [...c.tiers, { min_words: 0, points: 0 }] })}>+ palier</button>
                   </div>
                 )}
+                {c.kind === "rhythm" && (
+                  <>
+                    <div className="grid-4">
+                      <label className="field">Pause longue à partir de (s)<input type="number" min={0.5} step="any" value={c.pause_seconds ?? 1.5} onChange={(e) => setCrit(i, { pause_seconds: num(e.target.value) || 1.5 })} /></label>
+                      <label className="field">− par pause longue<input type="number" min={0} step="any" value={c.pause_penalty ?? 0.5} onChange={(e) => setCrit(i, { pause_penalty: num(e.target.value) })} /></label>
+                      <label className="field">Débit lent sous (mots/min)<input type="number" min={0} step="any" value={c.min_wpm ?? 60} onChange={(e) => setCrit(i, { min_wpm: num(e.target.value) })} /></label>
+                      <label className="field">− si débit lent<input type="number" min={0} step="any" value={c.slow_penalty ?? 0.5} onChange={(e) => setCrit(i, { slow_penalty: num(e.target.value) })} /></label>
+                    </div>
+                    <span className="muted" style={{ fontSize: 12.5 }}>La note est suggérée à partir des pauses et du débit mesurés ; vous pouvez la remplacer sur chaque enregistrement.</span>
+                  </>
+                )}
                 {c.kind === "manual" && <span className="muted" style={{ fontSize: 12.5 }}>La note de ce critère est saisie par vous sur chaque enregistrement.</span>}
                 <div><button className="btn btn-sm btn-danger" onClick={() => setDraft((d) => d && { ...d, criteria: d.criteria.filter((_, j) => j !== i) })}>Retirer ce critère</button></div>
               </div>
@@ -143,7 +158,7 @@ export function RubricsPage() {
             <div className="row wrap">
               <button className="btn" onClick={() => setDraft((d) => d && { ...d, criteria: [...d.criteria, { id: `c${Date.now().toString(36)}`, label: "Nouveau critère", kind: "errors", category: "grammar", max_points: 2, penalty_minor: 0.5, penalty_major: 1, cap_deduction: null, tiers: [] }] })}>
                 <span style={{ width: 15, display: "inline-flex" }}><IconPlus /></span> Ajouter un critère</button>
-              <span className="muted">Total des critères : <b>{fmtNum(sumMax)}</b> pts, ramené sur {fmtNum(draft.total_points)}.</span>
+              <span className="muted">Total des critères : <b>{fmtNum(sumMax)}</b> pts, ramené sur {fmtNum(draft.total_points)}{draft.criteria.some((c) => c.weight != null) ? " par moyenne pondérée (coefficients)" : ""}.</span>
               <div className="grow" />
               {draft.id != null && <button className="btn btn-danger" onClick={() => void remove()}>Supprimer</button>}
               <button className="btn btn-primary" onClick={() => void save()}>Enregistrer</button>

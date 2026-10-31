@@ -4,7 +4,7 @@ import { fmtNum } from "../lib/time";
 
 interface Props {
   grade: Grade; rubric: Rubric; rubrics: Rubric[]; manual: Record<string, number>; stats: Stats;
-  onRubric: (id: number) => void; onManual: (id: string, v: number) => void;
+  onRubric: (id: number) => void; onManual: (id: string, v: number | null) => void;
 }
 
 export function GradeCard({ grade, rubric, rubrics, manual, stats, onRubric, onManual }: Props) {
@@ -21,6 +21,7 @@ export function GradeCard({ grade, rubric, rubrics, manual, stats, onRubric, onM
         <span className="grade-out">/ {fmtNum(grade.out_of)}</span>
         <span className="muted" style={{ marginLeft: "auto", fontSize: 12.5, textAlign: "right" }}>
           {stats.student_words} mots d'élève<br />{Math.round(stats.student_speech_seconds)} s de parole
+          {stats.words_per_minute > 0 && <><br />{fmtNum(Math.round(stats.words_per_minute))} mots/min</>}
         </span>
       </div>
       <div style={{ marginTop: 12 }}>
@@ -28,8 +29,9 @@ export function GradeCard({ grade, rubric, rubrics, manual, stats, onRubric, onM
           <div className="crit" key={c.id}>
             <div className="row">
               <span className="grow" style={{ fontWeight: 600 }}>{c.label}</span>
-              {c.kind === "manual"
-                ? <ManualInput value={manual[c.id]} max={c.max} onCommit={(v) => onManual(c.id, v)} />
+              {c.kind === "manual" || c.kind === "rhythm"
+                ? <ManualInput value={manual[c.id]} max={c.max} onCommit={(v) => onManual(c.id, v)}
+                    placeholder={c.kind === "rhythm" && c.suggested != null ? fmtNum(c.suggested) : "saisir"} clearable={c.kind === "rhythm"} />
                 : <span className="mono">{fmtNum(c.earned)}</span>}
               <span className="muted mono">/ {fmtNum(c.max)}</span>
             </div>
@@ -47,17 +49,19 @@ export function GradeCard({ grade, rubric, rubrics, manual, stats, onRubric, onM
   );
 }
 
-function ManualInput({ value, max, onCommit }: { value: number | undefined; max: number; onCommit: (v: number) => void }) {
+/** `clearable`: emptying the field removes the manual value (back to the automatic suggestion). */
+function ManualInput({ value, max, onCommit, placeholder, clearable }: { value: number | undefined; max: number; onCommit: (v: number | null) => void; placeholder: string; clearable: boolean }) {
   const [text, setText] = useState<string | null>(null);
   const shown = text ?? (value === undefined ? "" : String(value).replace(".", ","));
   const commit = () => {
     if (text === null) return;
     const v = Number(text.replace(",", "."));
     setText(null);
-    if (text.trim() !== "" && Number.isFinite(v)) onCommit(Math.min(max, Math.max(0, v)));
+    if (text.trim() === "") { if (clearable && value !== undefined) onCommit(null); return; }
+    if (Number.isFinite(v)) onCommit(Math.min(max, Math.max(0, v)));
   };
   return (
-    <input className="manual-input" type="text" inputMode="decimal" placeholder="saisir" value={shown} aria-label="Points saisis"
+    <input className="manual-input" type="text" inputMode="decimal" placeholder={placeholder} value={shown} aria-label="Points saisis"
       onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
   );
 }

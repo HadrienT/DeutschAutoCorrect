@@ -14,6 +14,9 @@ export function LibraryPage() {
   const [title, setTitle] = useState("");
   const [student, setStudent] = useState("");
   const [rubricId, setRubricId] = useState<number | null>(null);
+  // kept between uploads and visits: a whole class recites the same text
+  const [reference, setReference] = useState(() => localStorage.getItem("dac.reference") ?? "");
+  useEffect(() => { localStorage.setItem("dac.reference", reference); }, [reference]);
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -31,7 +34,7 @@ export function LibraryPage() {
     setBusy(true);
     try {
       for (const f of Array.from(files)) {
-        await api.upload(f, files.length === 1 ? title : "", student, rubricId);
+        await api.upload(f, files.length === 1 ? title : "", student, rubricId, reference);
       }
       setTitle("");
       toast(`${files.length} enregistrement(s) envoyé(s)`);
@@ -62,6 +65,9 @@ export function LibraryPage() {
                 {rubrics.map((r) => <option key={r.id} value={r.id ?? ""}>{r.name}</option>)}
               </select></label>
           </div>
+          <label className="field" style={{ marginTop: 10 }}>Texte de référence (récitation ou lecture — facultatif, conservé pour les envois suivants)
+            <textarea rows={3} value={reference} onChange={(e) => setReference(e.target.value)} data-testid="reference-text"
+              placeholder="Laissez vide pour une expression libre. Sinon, collez le texte que l'élève doit dire : les mots oubliés ou remplacés seront relevés." /></label>
         </div>
         <div className={`dropzone ${over ? "over" : ""}`} role="button" tabIndex={0} aria-label="Déposer un fichier audio"
           onClick={() => input.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") input.current?.click(); }}

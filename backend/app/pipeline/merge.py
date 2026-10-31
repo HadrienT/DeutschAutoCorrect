@@ -20,7 +20,9 @@ def merge_errors(*groups: list[DetectedError]) -> list[DetectedError]:
     """Same category + overlapping time span = same error; keep the most confident/explained."""
     merged: list[DetectedError] = []
     for e in (x for g in groups for x in g):
-        dup = next((m for m in merged if m.category == e.category and _overlap(m, e)), None)
+        dup = next((m for m in merged if m.category == e.category and _overlap(m, e)
+                    # reference errors are one per word: neighbours are never duplicates
+                    and not (m.source == e.source == "reference")), None)
         if dup is None:
             merged.append(e)
             continue

@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .models import Analysis, Rubric, default_rubric
+from .models import Analysis, Rubric, default_rubric, recitation_rubric
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS rubrics (
@@ -38,6 +38,20 @@ class Database:
             self._conn.executescript(SCHEMA)
             self._conn.commit()
         self._ensure_default_rubric()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Schema upgrades of existing databases, tracked with PRAGMA user_version."""
+        with self._tx() as c:
+            if c.execute("PRAGMA user_version").fetchone()[0] < 1:
+                cols = {r["name"] for r in c.execute("PRAGMA table_info(recordings)")}
+                if "reference_text" not in cols:
+                    c.execute("ALTER TABLE recordings ADD COLUMN reference_text TEXT NOT NULL "
+                              "DEFAULT ''")
+                r = recitation_rubric()
+                c.execute("INSERT INTO rubrics(name,json,created_at) VALUES(?,?,?)",
+                          (r.name, r.model_dump_json(), time.time()))
+                c.execute("PRAGMA user_version = 1")
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -102,12 +116,12 @@ class Database:
 
     # ---- recordings ----
     def create_recording(self, rec_id: str, title: str, student_name: str, filename: str,
-                         rubric_id: int | None) -> None:
+                         rubric_id: int | None, reference_text: str = "") -> None:
         with self._tx() as c:
             c.execute(
-                "INSERT INTO recordings(id,title,student_name,filename,created_at,rubric_id) "
-                "VALUES(?,?,?,?,?,?)",
-                (rec_id, title, student_name, filename, time.time(), rubric_id),
+                "INSERT INTO recordings(id,title,student_name,filename,created_at,rubric_id,"
+                "reference_text) VALUES(?,?,?,?,?,?,?)",
+                (rec_id, title, student_name, filename, time.time(), rubric_id, reference_text),
             )
 
     def update_recording(self, rec_id: str, **fields: Any) -> None:

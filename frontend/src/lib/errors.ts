@@ -1,12 +1,13 @@
 import type { Category, DetectedError, Segment, Word } from "../api/types";
 
-export const CATEGORIES: Category[] = ["pronunciation", "grammar", "conjugation", "vocabulary"];
+export const CATEGORIES: Category[] = ["text", "pronunciation", "grammar", "conjugation", "vocabulary"];
 
 export const CATEGORY_LABEL: Record<Category, string> = {
   grammar: "Grammaire",
   conjugation: "Conjugaison",
   vocabulary: "Vocabulaire",
   pronunciation: "Prononciation",
+  text: "Texte de référence",
 };
 
 export const SUBTYPE_LABEL: Record<string, string> = {
@@ -15,7 +16,7 @@ export const SUBTYPE_LABEL: Record<string, string> = {
   person_ending: "Terminaison", auxiliary: "Auxiliaire", participle: "Participe passé",
   tense: "Temps", separable_verb: "Verbe séparable", modal: "Modal", irregular: "Verbe irrégulier",
   wrong_word: "Mot inadapté", french_word: "Mot français", false_friend: "Faux ami",
-  invented_word: "Mot inventé", missing_word: "Mot manquant",
+  invented_word: "Mot inventé", missing_word: "Mot manquant", omitted_word: "Mot oublié",
   ich_laut: "ch doux [ç]", ach_laut: "ch dur [x]", umlaut: "Umlaut ü/ö", h_aspire: "h expiré",
   w_v: "w / v", z_laut: "z = [ts]", ei_ie: "ei / ie", sch_laut: "sch [ʃ]",
   auslautverhaertung: "Durcissement final", schwa_final: "-e final", phoneme_mismatch: "Son différent",
@@ -23,13 +24,13 @@ export const SUBTYPE_LABEL: Record<string, string> = {
 };
 
 export const SOURCE_LABEL: Record<string, string> = {
-  llm: "IA", rules: "Règles", phonemes: "Phonèmes", asr_confidence: "Confiance ASR", manual: "Manuel",
+  llm: "IA", rules: "Règles", phonemes: "Phonèmes", asr_confidence: "Confiance ASR", reference: "Texte de référence", manual: "Manuel",
 };
 
 export const subtypeLabel = (s: string) => SUBTYPE_LABEL[s] ?? s.replace(/_/g, " ");
 
 export function groupByCategory(errors: DetectedError[]): Record<Category, DetectedError[]> {
-  const out: Record<Category, DetectedError[]> = { pronunciation: [], grammar: [], conjugation: [], vocabulary: [] };
+  const out: Record<Category, DetectedError[]> = { text: [], pronunciation: [], grammar: [], conjugation: [], vocabulary: [] };
   for (const e of [...errors].sort((a, b) => a.start - b.start)) out[e.category].push(e);
   return out;
 }

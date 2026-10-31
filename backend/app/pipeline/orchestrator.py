@@ -13,6 +13,7 @@ from .correction.base import Corrector
 from .merge import merge_errors
 from .pronunciation.base import PronunciationEngine
 from .pronunciation.step import analyze_pronunciation
+from .reference import apply_reference
 from .segments import classify_segments, compute_stats
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,10 @@ class PipelineError(RuntimeError):
 
 
 def run_pipeline(src: Path, workdir: Path, engines: Engines,
-                 progress: ProgressFn | None = None) -> tuple[Analysis, Path]:
+                 progress: ProgressFn | None = None,
+                 reference_text: str = "") -> tuple[Analysis, Path]:
+    """With a reference text (recitation / reading) the student's words are compared with it
+    instead of being sent to the grammar corrector: the wording is not the student's own."""
     def report(stage: str, pct: float) -> None:
         if progress:
             progress(stage, pct)
@@ -67,18 +71,21 @@ def run_pipeline(src: Path, workdir: Path, engines: Engines,
 
     report("correction", 80)
     lang_errors = []
-    try:
-        lang_errors = engines.corrector.correct(graded)
-    except Exception as e:
-        log.exception("correction failed")
-        warnings.append(f"Correction grammaticale indisponible : {e}")
+    if not reference_text.strip():
+        try:
+            lang_errors = engines.corrector.correct(graded)
+        except Exception as e:
+            log.exception("correction failed")
+            warnings.append(f"Correction grammaticale indisponible : {e}")
 
     report("merge", 96)
     analysis.errors = merge_errors(lang_errors, pron_errors)
+    if reference_text.strip():
+        apply_reference(analysis, reference_text)
     analysis.stats = compute_stats(analysis, duration)
     analysis.engines = {
         "asr": engines.asr.name,
-        "corrector": engines.corrector.name,
+        "corrector": "texte de référence" if reference_text.strip() else engines.corrector.name,
         "pronunciation": engines.pronunciation.name if engines.pronunciation else "désactivée",
     }
     report("done", 100)

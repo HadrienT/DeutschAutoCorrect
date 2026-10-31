@@ -1,11 +1,14 @@
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.pipeline.correction.llm import (
+    LOCAL_SCHEMA,
     SCHEMA,
     AnthropicCorrector,
+    OpenAICompatCorrector,
     build_user_message,
     parse_errors,
 )
@@ -67,3 +70,65 @@ def test_low_confidence_words_are_annotated():
     seg = mk_segment(text="ich gehe")
     seg.words[1].prob = 0.4
     assert "gehe{40%}" in build_user_message([seg])
+
+
+def test_noop_correction_is_dropped():
+    item = dict(PAYLOAD["errors"][0], quote="gehe in", expected="Gehe in.")
+    assert parse_errors(json.dumps({"errors": [item]}), [mk_segment()]) == []
+
+
+def test_confidence_marks_are_stripped_from_quotes():
+    item = dict(PAYLOAD["errors"][0], quote="gehe{40%} in", expected="gehe ins")
+    seg = mk_segment()
+    err = parse_errors(json.dumps({"errors": [item]}), [seg])[0]
+    assert err.heard == "gehe in" and err.start == seg.words[1].start
+
+
+def local_corrector(model="", served="gemma", content=None, finish="stop"):
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": served}]})
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{
+            "finish_reason": finish,
+            "message": {"content": content or json.dumps(PAYLOAD)}}]})
+
+    client = httpx.Client(base_url="http://llm.test/v1/", transport=httpx.MockTransport(handler))
+    return OpenAICompatCorrector(model=model, client=client), seen
+
+
+def test_local_corrector_request_shape():
+    corrector, seen = local_corrector()
+    errs = corrector.correct([mk_segment()])
+    assert len(errs) == 1 and errs[0].source == "llm"
+    body = seen[0]
+    assert body["model"] == "gemma"  # empty DAC_LLM_MODEL: whatever the server serves
+    assert body["response_format"]["json_schema"]["schema"] == LOCAL_SCHEMA
+    assert body["messages"][0]["role"] == "system"
+
+
+def test_local_corrector_sends_small_batches():
+    corrector, seen = local_corrector()
+    corrector.correct([mk_segment(sid=f"s{i}") for i in range(1, 20)])
+    assert len(seen) == 5  # 4 + 4 + 4 + 4 + 3 segments
+
+
+def test_local_corrector_refuses_another_served_model():
+    corrector, seen = local_corrector(model="gemma", served="qwen-coder")
+    with pytest.raises(RuntimeError, match="qwen-coder"):
+        corrector.correct([mk_segment()])
+    assert seen == []
+
+
+def test_local_corrector_truncation_and_unreachable():
+    with pytest.raises(RuntimeError):
+        local_corrector(finish="length")[0].correct([mk_segment()])
+
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    client = httpx.Client(base_url="http://llm.test/v1/", transport=httpx.MockTransport(down))
+    with pytest.raises(RuntimeError, match="injoignable"):
+        OpenAICompatCorrector(client=client).correct([mk_segment()])

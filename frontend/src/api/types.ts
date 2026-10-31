@@ -1,4 +1,4 @@
-export type Category = "grammar" | "conjugation" | "vocabulary" | "pronunciation";
+export type Category = "grammar" | "conjugation" | "vocabulary" | "pronunciation" | "text";
 export type Severity = "minor" | "major";
 export type ErrorStatus = "pending" | "confirmed" | "rejected";
 export type Role = "student" | "teacher" | "other";
@@ -17,6 +17,7 @@ export interface DetectedError {
 export interface Stats {
   duration: number; student_words: number; student_speech_seconds: number; speech_ratio: number;
   graded_segments: number; teacher_segments: number; french_segments: number;
+  words_per_minute: number; pauses: number[];
 }
 export interface Analysis {
   segments: Segment[]; errors: DetectedError[]; stats: Stats;
@@ -24,9 +25,12 @@ export interface Analysis {
 }
 export interface VolumeTier { min_words: number; points: number }
 export interface Criterion {
-  id: string; label: string; kind: "errors" | "volume" | "manual"; category: Category | null;
+  id: string; label: string; kind: "errors" | "volume" | "manual" | "rhythm"; category: Category | null;
   max_points: number; penalty_minor: number; penalty_major: number; cap_deduction: number | null;
   tiers: VolumeTier[];
+  /** Coefficient in the weighted mean; null/absent = max_points (plain sum of points). */
+  weight?: number | null;
+  pause_seconds?: number; pause_penalty?: number; min_wpm?: number; slow_penalty?: number;
 }
 export interface Rubric {
   id: number | null; name: string; total_points: number; rounding: "none" | "half" | "integer";
@@ -35,7 +39,7 @@ export interface Rubric {
 }
 export interface CriterionGrade {
   id: string; label: string; kind: Criterion["kind"]; earned: number; max: number; detail: string;
-  error_count: number;
+  error_count: number; weight: number; suggested: number | null;
 }
 export interface Grade {
   raw_total: number; raw_max: number; total: number; out_of: number; criteria: CriterionGrade[];
@@ -46,7 +50,7 @@ export interface RecordingSummary {
   error: string; duration: number; created_at: number; rubric_id: number | null; grade: Grade | null;
 }
 export interface RecordingDetail extends RecordingSummary {
-  analysis: Analysis | null; rubric: Rubric; manual: Record<string, number>;
+  analysis: Analysis | null; rubric: Rubric; manual: Record<string, number>; reference_text: string;
 }
 export interface Health {
   status: string; engines: Record<string, string>; degraded: boolean; notices: string[];

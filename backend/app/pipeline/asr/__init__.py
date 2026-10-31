@@ -8,6 +8,6 @@ def build_asr(settings: Settings) -> AsrEngine:
     if settings.asr_backend == "faster-whisper":
         from .faster_whisper import FasterWhisperAsr
         return FasterWhisperAsr(settings.whisper_model, settings.whisper_device,
-                                settings.whisper_compute_type)
+                                settings.whisper_compute_type, settings.whisper_device_index)
     from .mock import MockAsr
     return MockAsr()
