@@ -5,6 +5,8 @@ a faithful transcript that keeps the student's mistakes, detects grammar,
 conjugation, vocabulary and pronunciation errors with clickable timecodes, and
 computes a grade from a configurable rubric.
 
+**[How it works: interactive map](https://hadrient.github.io/atlas-pages/DeutschAutoCorrect/)**
+
 ![Recording view](docs/screenshots/02-recording.png)
 
 The teacher stays in charge: every detected error can be confirmed, rejected or
